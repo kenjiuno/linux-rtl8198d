@@ -13357,7 +13357,9 @@ M:	Daniel Golle <daniel@makrotopia.org>
 L:	netdev@vger.kernel.org
 S:	Maintained
 F:	drivers/net/pcs/pcs-mtk-lynxi.c
+F:	drivers/net/pcs/pcs-mtk-usxgmii.c
 F:	include/linux/pcs/pcs-mtk-lynxi.h
+F:	include/linux/pcs/pcs-mtk-usxgmii.h
 
 MEDIATEK ETHERNET PHY DRIVERS
 M:	Daniel Golle <daniel@makrotopia.org>
@@ -13367,6 +13369,7 @@ L:	netdev@vger.kernel.org
 S:	Maintained
 F:	drivers/net/phy/mediatek-ge-soc.c
 F:	drivers/net/phy/mediatek-ge.c
+F:	drivers/phy/mediatek/phy-mtk-xfi-tphy.c
 
 MEDIATEK I2C CONTROLLER DRIVER
 M:	Qii Wang <qii.wang@mediatek.com>
@@ -21989,6 +21992,7 @@ U-BOOT ENVIRONMENT VARIABLES
 M:	Rafał Miłecki <rafal@milecki.pl>
 S:	Maintained
 F:	Documentation/devicetree/bindings/nvmem/u-boot,env.yaml
+F:	drivers/nvmem/layouts/u-boot-env.c
 F:	drivers/nvmem/u-boot-env.c
 
 UACCE ACCELERATOR FRAMEWORK
@@ -22014,6 +22018,12 @@ F:	Documentation/ABI/testing/sysfs-fs-ubifs
 F:	Documentation/filesystems/ubifs-authentication.rst
 F:	Documentation/filesystems/ubifs.rst
 F:	fs/ubifs/
+
+U-BOOT UIMAGE.FIT PARSER
+M:	Daniel Golle <daniel@makrotopia.org>
+L:	linux-block@vger.kernel.org
+S:	Maintained
+F:	drivers/block/fitblk.c
 
 UBLK USERSPACE BLOCK DRIVER
 M:	Ming Lei <ming.lei@redhat.com>

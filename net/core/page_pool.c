@@ -211,10 +211,6 @@ static int page_pool_init(struct page_pool *pool,
 		 */
 	}
 
-	if (PAGE_POOL_DMA_USE_PP_FRAG_COUNT &&
-	    pool->p.flags & PP_FLAG_PAGE_FRAG)
-		return -EINVAL;
-
 #ifdef CONFIG_PAGE_POOL_STATS
 	pool->recycle_stats = alloc_percpu(struct page_pool_recycle_stats);
 	if (!pool->recycle_stats)
@@ -363,12 +359,20 @@ static bool page_pool_dma_map(struct page_pool *pool, struct page *page)
 	if (dma_mapping_error(pool->p.dev, dma))
 		return false;
 
-	page_pool_set_dma_addr(page, dma);
+	if (page_pool_set_dma_addr(page, dma))
+		goto unmap_failed;
 
 	if (pool->p.flags & PP_FLAG_DMA_SYNC_DEV)
 		page_pool_dma_sync_for_device(pool, page, pool->p.max_len);
 
 	return true;
+
+unmap_failed:
+	WARN_ON_ONCE("unexpected DMA address, please report to netdev@");
+	dma_unmap_page_attrs(pool->p.dev, dma,
+			     PAGE_SIZE << pool->p.order, pool->p.dma_dir,
+			     DMA_ATTR_SKIP_CPU_SYNC | DMA_ATTR_WEAK_ORDERING);
+	return false;
 }
 
 static void page_pool_set_pp_info(struct page_pool *pool,
@@ -376,6 +380,14 @@ static void page_pool_set_pp_info(struct page_pool *pool,
 {
 	page->pp = pool;
 	page->pp_magic |= PP_SIGNATURE;
+
+	/* Ensuring all pages have been split into one fragment initially:
+	 * page_pool_set_pp_info() is only called once for every page when it
+	 * is allocated from the page allocator and page_pool_fragment_page()
+	 * is dirtying the same cache line as the page->pp_magic above, so
+	 * the overhead is negligible.
+	 */
+	page_pool_fragment_page(page, 1);
 	if (pool->p.init_callback)
 		pool->p.init_callback(page, pool->p.init_arg);
 }
@@ -672,7 +684,7 @@ void page_pool_put_page_bulk(struct page_pool *pool, void **data,
 		struct page *page = virt_to_head_page(data[i]);
 
 		/* It is not the last user for the page frag case */
-		if (!page_pool_is_last_frag(pool, page))
+		if (!page_pool_is_last_frag(page))
 			continue;
 
 		page = __page_pool_put_page(pool, page, -1, false);
@@ -748,8 +760,7 @@ struct page *page_pool_alloc_frag(struct page_pool *pool,
 	unsigned int max_size = PAGE_SIZE << pool->p.order;
 	struct page *page = pool->frag_page;
 
-	if (WARN_ON(!(pool->p.flags & PP_FLAG_PAGE_FRAG) ||
-		    size > max_size))
+	if (WARN_ON(size > max_size))
 		return NULL;
 
 	size = ALIGN(size, dma_get_cache_alignment());
@@ -862,7 +873,8 @@ static void page_pool_release_retry(struct work_struct *wq)
 {
 	struct delayed_work *dwq = to_delayed_work(wq);
 	struct page_pool *pool = container_of(dwq, typeof(*pool), release_dw);
-	int inflight;
+	unsigned long flags;
+	int cpu, inflight;
 
 	inflight = page_pool_release(pool);
 	/* In rare cases, a driver bug may cause inflight to go negative.
@@ -873,6 +885,21 @@ static void page_pool_release_retry(struct work_struct *wq)
 	 */
 	if (inflight <= 0)
 		return;
+
+	/* Run NET_RX_SOFTIRQ in order to free pending skbs in softnet_data
+	 * defer_list that can stay in the list until we have enough queued
+	 * traffic.
+	 */
+	local_irq_save(flags);
+	for_each_online_cpu(cpu) {
+		struct softnet_data *sd = &per_cpu(softnet_data, cpu);
+
+		if (cpu == raw_smp_processor_id())
+			raise_softirq_irqoff(NET_RX_SOFTIRQ);
+		else if (!cmpxchg(&sd->defer_ipi_scheduled, 0, 1))
+			smp_call_function_single_async(cpu, &sd->defer_csd);
+	}
+	local_irq_restore(flags);
 
 	/* Periodic warning */
 	if (time_after_eq(jiffies, pool->defer_warn)) {
